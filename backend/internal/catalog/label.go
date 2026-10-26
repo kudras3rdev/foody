@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// Basis — база КБЖУ позиции: на 100 г или на 100 мл (ADR 001).
+// Basis is the unit nutrition values refer to: per 100 g or per 100 ml (ADR 001)
 type Basis string
 
 const (
@@ -14,7 +14,7 @@ const (
 	BasisML   Basis = "ml"
 )
 
-// Per100 — КБЖУ на 100 единиц базы.
+// Per100 holds nutrition values per 100 units of the basis
 type Per100 struct {
 	Kcal    float64
 	Protein float64
@@ -22,16 +22,16 @@ type Per100 struct {
 	Carbs   float64
 }
 
-// Label — данные этикетки товара (FR-04).
+// Label is the nutrition data of a packaged product (FR-04)
 type Label struct {
 	Name     string
 	Brand    string
 	Basis    Basis
 	Per100   Per100
-	PackSize *float64 // в единицах базы; nil — на этикетке не указан
+	PackSize *float64 // in basis units, nil when not printed
 }
 
-// Коды непройденных проверок этикетки.
+// codes of failed label checks
 const (
 	IssueNegative         = "negative_value"
 	IssueEnergyMismatch   = "energy_mismatch"
@@ -41,50 +41,50 @@ const (
 	IssueBadPackSize      = "bad_pack_size"
 	IssueCrossMismatch    = "cross_check_mismatch"
 	IssueCrossUnavailable = "cross_check_unavailable"
-	IssueBadPer           = "bad_per"               // порция не указана или не в г/мл
-	IssuePerPortion       = "per_portion_converted" // на этикетке не на 100 г/мл, пересчитано кодом
-	IssueNoEnergy         = "no_energy"             // нет ни ккал, ни кДж
-	IssueEnergyUnits      = "kcal_kj_mismatch"      // ккал и кДж на этикетке не сходятся
-	IssuePackUnit         = "pack_unit_mismatch"    // упаковка в массе, а база — в объёме, или наоборот
-	IssueQualified        = "qualified_values"      // «не более», диапазоны, плохо видные цифры
+	IssueBadPer           = "bad_per"               // serving size missing or not in g/ml
+	IssuePerPortion       = "per_portion_converted" // label is not per 100 g/ml, converted by code
+	IssueNoEnergy         = "no_energy"             // neither kcal nor kJ printed
+	IssueEnergyUnits      = "kcal_kj_mismatch"      // printed kcal and kJ disagree
+	IssuePackUnit         = "pack_unit_mismatch"    // pack is in mass while basis is volume, or vice versa
+	IssueQualified        = "qualified_values"      // "no more than", ranges, hard to read digits
 )
 
-// Issue — непройденная проверка; этикетка с проблемами уходит на подтверждение (FR-05).
+// Issue is a failed check; a label with issues goes to user review (FR-05)
 type Issue struct {
 	Code    string
 	Message string
 }
 
-// Допуски проверок (FR-05, ADR 001, architecture.md 3.3).
+// check tolerances (FR-05, ADR 001, architecture.md 3.3)
 const (
-	energyRelTol = 0.15 // формула 4·Б + 9·Ж + 4·У против калорийности
-	energyAbsTol = 5.0  // ккал: для нулевых и малокалорийных продуктов
+	energyRelTol = 0.15 // 4*P + 9*F + 4*C against kcal
+	energyAbsTol = 5.0  // kcal, for zero and low calorie products
 	maxMacros    = 100.0
 	maxKcal      = 900.0
-	crossRelTol  = 0.02 // сверка двух моделей
-	crossAbsTol  = 0.1  // для нулей и малых значений
+	crossRelTol  = 0.02 // cross-check of two models
+	crossAbsTol  = 0.1  // for zeros and small values
 	kjPerKcal    = 4.184
-	unitsRelTol  = 0.02 // ккал против кДж/4.184
-	unitsAbsTol  = 1.0  // ккал: округление на этикетке
-	eps          = 1e-9 // погрешность float на границах допусков
+	unitsRelTol  = 0.02 // kcal against kJ/4.184
+	unitsAbsTol  = 1.0  // kcal, rounding on the label
+	eps          = 1e-9 // float error at tolerance boundaries
 )
 
-// RawLabel — данные этикетки как напечатаны (ADR 007): порция, единицы
-// и энергия без пересчёта. Пересчитывает только NormalizeLabel.
+// RawLabel is the label data as printed (ADR 007): serving size, units and
+// energy without conversion; only NormalizeLabel converts
 type RawLabel struct {
-	SourceText string // дословный фрагмент этикетки с КБЖУ
+	SourceText string // verbatim label fragment with nutrition values
 	Name       string
 	Brand      string
-	PerAmount  float64 // «на 100 г» → 100, «на порцию 30 г» → 30
-	PerUnit    string  // g или ml
+	PerAmount  float64 // "per 100 g" gives 100, "per 30 g serving" gives 30
+	PerUnit    string  // g or ml
 	Kcal       *float64
 	KJ         *float64
 	Protein    float64
 	Fat        float64
 	Carbs      float64
-	PackAmount *float64 // nil — на фото не видно
-	PackUnit   string   // g, kg, ml или l
-	Qualifiers []string // пометки модели: «жиры: не более 0,5 г»
+	PackAmount *float64 // nil when not visible on the photo
+	PackUnit   string   // g, kg, ml or l
+	Qualifiers []string // model notes such as "fat: no more than 0.5 g"
 }
 
 var packUnits = map[string]struct {
@@ -95,41 +95,47 @@ var packUnits = map[string]struct {
 	"ml": {BasisML, 1}, "l": {BasisML, 1000},
 }
 
-// NormalizeLabel переводит напечатанное в Label на 100 единиц базы и
-// возвращает проблемы, из-за которых этикетку нужно подтвердить.
-// Проверки FR-05 (CheckLabel) вызываются отдельно, на результате.
+// NormalizeLabel converts printed values to a Label per 100 basis units and
+// returns the issues that require user review
+// FR-05 checks (CheckLabel) run separately on the result
 func NormalizeLabel(r RawLabel) (Label, []Issue) {
 	var issues []Issue
+
 	add := func(code, format string, args ...any) {
 		issues = append(issues, Issue{Code: code, Message: fmt.Sprintf(format, args...)})
 	}
-	l := Label{Name: r.Name, Brand: r.Brand, Basis: Basis(r.PerUnit)}
 
+	l := Label{Name: r.Name, Brand: r.Brand, Basis: Basis(r.PerUnit)}
 	scale := 1.0
+
 	switch {
 	case l.Basis != BasisGram && l.Basis != BasisML:
-		add(IssueBadPer, "единица порции %q, ожидается g или ml", r.PerUnit)
+		add(IssueBadPer, "serving unit %q, want g or ml", r.PerUnit)
 	case r.PerAmount <= 0:
-		add(IssueBadPer, "порция %g %s, должна быть больше нуля", r.PerAmount, r.PerUnit)
+		add(IssueBadPer, "serving size %g %s, must be positive", r.PerAmount, r.PerUnit)
 	case math.Abs(r.PerAmount-100) > eps:
 		scale = 100 / r.PerAmount
-		add(IssuePerPortion, "на этикетке значения на %g %s, пересчитано на 100", r.PerAmount, r.PerUnit)
+
+		add(IssuePerPortion, "label gives values per %g %s, converted to per 100", r.PerAmount, r.PerUnit)
 	}
 
 	var kcal float64
+
 	switch {
 	case r.Kcal != nil:
 		kcal = *r.Kcal
+
 		if r.KJ != nil {
 			fromKJ := *r.KJ / kjPerKcal
+
 			if tol := math.Max(unitsRelTol*kcal, unitsAbsTol); math.Abs(kcal-fromKJ) > tol+eps {
-				add(IssueEnergyUnits, "%g ккал, а %g кДж — это %.1f ккал", kcal, *r.KJ, fromKJ)
+				add(IssueEnergyUnits, "%g kcal, but %g kJ is %.1f kcal", kcal, *r.KJ, fromKJ)
 			}
 		}
 	case r.KJ != nil:
 		kcal = round(*r.KJ/kjPerKcal, 1)
 	default:
-		add(IssueNoEnergy, "на этикетке нет ни ккал, ни кДж")
+		add(IssueNoEnergy, "label has neither kcal nor kJ")
 	}
 
 	l.Per100 = Per100{
@@ -141,11 +147,12 @@ func NormalizeLabel(r RawLabel) (Label, []Issue) {
 
 	if r.PackAmount != nil {
 		u, ok := packUnits[r.PackUnit]
+
 		switch {
 		case !ok:
-			add(IssuePackUnit, "единица упаковки %q, ожидается g, kg, ml или l", r.PackUnit)
+			add(IssuePackUnit, "pack unit %q, want g, kg, ml or l", r.PackUnit)
 		case u.basis != l.Basis:
-			add(IssuePackUnit, "упаковка %g %s, а значения на 100 %s: без плотности не пересчитать", *r.PackAmount, r.PackUnit, r.PerUnit)
+			add(IssuePackUnit, "pack is %g %s while values are per 100 %s, cannot convert without density", *r.PackAmount, r.PackUnit, r.PerUnit)
 		default:
 			size := round(*r.PackAmount*u.mult, 2)
 			l.PackSize = &size
@@ -153,93 +160,111 @@ func NormalizeLabel(r RawLabel) (Label, []Issue) {
 	}
 
 	if len(r.Qualifiers) > 0 {
-		add(IssueQualified, "пометки модели: %s", strings.Join(r.Qualifiers, "; "))
+		add(IssueQualified, "model notes: %s", strings.Join(r.Qualifiers, "; "))
 	}
+
 	return l, issues
 }
 
 func round(v float64, digits int) float64 {
 	p := math.Pow(10, float64(digits))
+
 	return math.Round(v*p) / p
 }
 
-// CheckLabel проверяет этикетку по FR-05 и возвращает все непройденные проверки.
+// CheckLabel checks a label against FR-05 and returns every failed check
 func CheckLabel(l Label) []Issue {
 	var issues []Issue
+
 	add := func(code, format string, args ...any) {
 		issues = append(issues, Issue{Code: code, Message: fmt.Sprintf(format, args...)})
 	}
+
 	p := l.Per100
 
 	if l.Basis != BasisGram && l.Basis != BasisML {
-		add(IssueBadBasis, "база %q, ожидается g или ml", l.Basis)
+		add(IssueBadBasis, "basis %q, want g or ml", l.Basis)
 	}
+
 	for _, v := range []struct {
 		name string
 		val  float64
-	}{{"ккал", p.Kcal}, {"белки", p.Protein}, {"жиры", p.Fat}, {"углеводы", p.Carbs}} {
+	}{{"kcal", p.Kcal}, {"protein", p.Protein}, {"fat", p.Fat}, {"carbs", p.Carbs}} {
 		if v.val < 0 {
-			add(IssueNegative, "%s: отрицательное значение %g", v.name, v.val)
+			add(IssueNegative, "%s: negative value %g", v.name, v.val)
 		}
 	}
 
 	formula := 4*p.Protein + 9*p.Fat + 4*p.Carbs
+
 	if tol := math.Max(energyRelTol*p.Kcal, energyAbsTol); math.Abs(p.Kcal-formula) > tol+eps {
-		add(IssueEnergyMismatch, "калорийность %g, а по формуле 4·Б + 9·Ж + 4·У выходит %.1f (допуск ±%.1f)", p.Kcal, formula, tol)
+		add(IssueEnergyMismatch, "label says %g kcal, but 4*P + 9*F + 4*C gives %.1f (tolerance %.1f)", p.Kcal, formula, tol)
 	}
+
 	if sum := p.Protein + p.Fat + p.Carbs; sum > maxMacros+eps {
-		add(IssueMacrosOver100, "Б + Ж + У = %g на 100 %s, больше %g", sum, l.Basis, maxMacros)
+		add(IssueMacrosOver100, "P + F + C = %g per 100 %s, over %g", sum, l.Basis, maxMacros)
 	}
+
 	if p.Kcal > maxKcal+eps {
-		add(IssueKcalOver900, "калорийность %g на 100 %s, больше %g", p.Kcal, l.Basis, maxKcal)
+		add(IssueKcalOver900, "%g kcal per 100 %s, over %g", p.Kcal, l.Basis, maxKcal)
 	}
+
 	if l.PackSize != nil && *l.PackSize <= 0 {
-		add(IssueBadPackSize, "размер упаковки %g, должен быть больше нуля", *l.PackSize)
+		add(IssueBadPackSize, "pack size %g, must be positive", *l.PackSize)
 	}
+
 	return issues
 }
 
-// CompareLabels сверяет два независимых извлечения одной этикетки. Числа
-// расходятся, если разница больше max(2%, 0.1). Название и бренд не сверяются:
-// модели пишут их по-разному, а на подсчёт КБЖУ они не влияют.
+// CompareLabels cross-checks two independent readings of the same label
+// numbers differ when the difference is over max(2%, 0.1)
+// name and brand are not compared: models spell them differently and they do
+// not affect nutrition math
 func CompareLabels(a, b Label) []Issue {
 	var issues []Issue
+
 	add := func(format string, args ...any) {
 		issues = append(issues, Issue{Code: IssueCrossMismatch, Message: fmt.Sprintf(format, args...)})
 	}
+
 	if a.Basis != b.Basis {
-		add("база: %q и %q", a.Basis, b.Basis)
+		add("basis: %q and %q", a.Basis, b.Basis)
 	}
+
 	for _, v := range []struct {
 		name string
 		x, y float64
 	}{
-		{"ккал", a.Per100.Kcal, b.Per100.Kcal},
-		{"белки", a.Per100.Protein, b.Per100.Protein},
-		{"жиры", a.Per100.Fat, b.Per100.Fat},
-		{"углеводы", a.Per100.Carbs, b.Per100.Carbs},
+		{"kcal", a.Per100.Kcal, b.Per100.Kcal},
+		{"protein", a.Per100.Protein, b.Per100.Protein},
+		{"fat", a.Per100.Fat, b.Per100.Fat},
+		{"carbs", a.Per100.Carbs, b.Per100.Carbs},
 	} {
 		if differ(v.x, v.y) {
-			add("%s: %g и %g", v.name, v.x, v.y)
+			add("%s: %g and %g", v.name, v.x, v.y)
 		}
 	}
+
 	switch {
 	case (a.PackSize == nil) != (b.PackSize == nil):
-		add("размер упаковки: %s и %s", fmtPack(a.PackSize), fmtPack(b.PackSize))
+		add("pack size: %s and %s", fmtPack(a.PackSize), fmtPack(b.PackSize))
 	case a.PackSize != nil && differ(*a.PackSize, *b.PackSize):
-		add("размер упаковки: %g и %g", *a.PackSize, *b.PackSize)
+		add("pack size: %g and %g", *a.PackSize, *b.PackSize)
 	}
+
 	return issues
 }
 
 func differ(x, y float64) bool {
 	tol := math.Max(crossRelTol*math.Max(math.Abs(x), math.Abs(y)), crossAbsTol)
+
 	return math.Abs(x-y) > tol+eps
 }
 
 func fmtPack(p *float64) string {
 	if p == nil {
-		return "не указан"
+		return "not printed"
 	}
+
 	return fmt.Sprintf("%g", *p)
 }

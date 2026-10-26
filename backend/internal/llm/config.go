@@ -20,7 +20,7 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// DefaultTimeout — таймаут вызова модели, если в звене цепочки он не задан.
+// DefaultTimeout is the model call timeout when a chain entry sets none
 const DefaultTimeout = 30 * time.Second
 
 var (
@@ -28,7 +28,7 @@ var (
 	promptFileRe = regexp.MustCompile(`^([a-z0-9]+(?:_[a-z0-9]+)*_v[0-9]+)\.md$`)
 )
 
-// Config — провайдеры и цепочки моделей по задачам (config/models.yaml, NFR-07).
+// Config holds providers and model chains per task (config/models.yaml, NFR-07)
 type Config struct {
 	Providers map[string]Provider
 	Tasks     map[string]Task
@@ -37,28 +37,29 @@ type Config struct {
 type Provider struct {
 	Name      string
 	BaseURL   string
-	APIKeyEnv string // имя переменной окружения с ключом; ключ читается при вызове
+	APIKeyEnv string // env variable with the key, the key is read at call time
 }
 
 var errNoAPIKey = errors.New("API key is not set")
 
-// APIKey читает ключ провайдера из окружения.
+// APIKey reads the provider key from the environment
 func (p Provider) APIKey() (string, error) {
 	key := os.Getenv(p.APIKeyEnv)
 	if key == "" {
 		return "", fmt.Errorf("provider %s: %w: env %s is empty", p.Name, errNoAPIKey, p.APIKeyEnv)
 	}
+
 	return key, nil
 }
 
 type Task struct {
 	Name          string
-	PromptPath    string // путь к файлу промпта, относительные пути — от каталога конфига
-	PromptVersion string // имя файла промпта без расширения, например "meal_v1"
+	PromptPath    string // prompt file, relative paths resolve from the config directory
+	PromptVersion string // prompt file name without extension, e.g. "meal_v1"
 	Prompt        string
-	CrossCheck    bool // вторая модель цепочки извлекает независимо для сверки (FR-05)
+	CrossCheck    bool // a second chain model extracts independently to cross-check (FR-05)
 	Chain         []ChainEntry
-	Version       string // хэш задачи (модели + промпт) для recognition_runs.config_version
+	Version       string // task hash (models + prompt) for recognition_runs.config_version
 }
 
 type ChainEntry struct {
@@ -68,18 +69,19 @@ type ChainEntry struct {
 	Price    Price
 }
 
-// Price — цена в долларах за 1M токенов; ноль для бесплатных уровней.
+// Price is USD per 1M tokens, zero for free tiers
 type Price struct {
 	Input  float64
 	Output float64
 }
 
-// Task возвращает задачу по имени или ошибку, если её нет в конфиге.
+// Task returns the task by name or an error when it is not configured
 func (c *Config) Task(name string) (Task, error) {
 	t, ok := c.Tasks[name]
 	if !ok {
 		return Task{}, fmt.Errorf("task %q is not configured", name)
 	}
+
 	return t, nil
 }
 
@@ -111,32 +113,38 @@ type rawPrice struct {
 	Output float64 `yaml:"output"`
 }
 
-// LoadConfig читает и валидирует конфиг моделей. Все ошибки валидации
-// возвращаются вместе, чтобы исправить конфиг за один проход.
+// LoadConfig reads and validates the model config
+// all validation errors are returned together to fix the config in one pass
 func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read model config: %w", err)
 	}
+
 	cfg, err := parseConfig(data, filepath.Dir(path))
 	if err != nil {
 		return nil, fmt.Errorf("model config %s: %w", path, err)
 	}
+
 	return cfg, nil
 }
 
 func parseConfig(data []byte, baseDir string) (*Config, error) {
 	var raw rawConfig
+
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
+
 	if err := dec.Decode(&raw); err != nil {
 		if errors.Is(err, io.EOF) {
 			return nil, errors.New("config is empty")
 		}
+
 		return nil, fmt.Errorf("parse yaml: %w", err)
 	}
 
 	var errs []error
+
 	fail := func(format string, args ...any) {
 		errs = append(errs, fmt.Errorf(format, args...))
 	}
@@ -149,20 +157,24 @@ func parseConfig(data []byte, baseDir string) (*Config, error) {
 	if len(raw.Providers) == 0 {
 		fail("providers: at least one provider is required")
 	}
+
 	for _, name := range slices.Sorted(maps.Keys(raw.Providers)) {
 		p := raw.Providers[name]
 		if u, err := url.Parse(p.BaseURL); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
 			fail("providers.%s.base_url: want absolute http(s) URL, got %q", name, p.BaseURL)
 		}
+
 		if !envNameRe.MatchString(p.APIKeyEnv) {
 			fail("providers.%s.api_key_env: want env variable name like GEMINI_API_KEY, got %q", name, p.APIKeyEnv)
 		}
+
 		cfg.Providers[name] = Provider{Name: name, BaseURL: p.BaseURL, APIKeyEnv: p.APIKeyEnv}
 	}
 
 	if len(raw.Tasks) == 0 {
 		fail("tasks: at least one task is required")
 	}
+
 	for _, name := range slices.Sorted(maps.Keys(raw.Tasks)) {
 		rt := raw.Tasks[name]
 		prefix := "tasks." + name
@@ -174,10 +186,12 @@ func parseConfig(data []byte, baseDir string) (*Config, error) {
 			fail("%s.prompt: file name must look like meal_v1.md, got %q", prefix, filepath.Base(rt.Prompt))
 		} else {
 			t.PromptVersion = m[1]
+
 			t.PromptPath = rt.Prompt
 			if !filepath.IsAbs(t.PromptPath) {
 				t.PromptPath = filepath.Join(baseDir, t.PromptPath)
 			}
+
 			text, err := os.ReadFile(t.PromptPath)
 			switch {
 			case err != nil:
@@ -192,39 +206,49 @@ func parseConfig(data []byte, baseDir string) (*Config, error) {
 		if len(rt.Chain) == 0 {
 			fail("%s.chain: at least one model is required", prefix)
 		}
+
 		if rt.CrossCheck && len(rt.Chain) < 2 {
 			fail("%s.cross_check: needs at least two models in chain", prefix)
 		}
+
 		seen := make(map[string]bool, len(rt.Chain))
 		for i, rc := range rt.Chain {
 			at := fmt.Sprintf("%s.chain[%d]", prefix, i)
+
 			e := ChainEntry{Provider: rc.Provider, Model: rc.Model, Timeout: DefaultTimeout}
 			if rc.Provider == "" {
 				fail("%s.provider: required", at)
 			} else if _, ok := raw.Providers[rc.Provider]; !ok {
 				fail("%s.provider: unknown provider %q", at, rc.Provider)
 			}
+
 			if rc.Model == "" {
 				fail("%s.model: required", at)
 			}
+
 			if key := rc.Provider + "/" + rc.Model; seen[key] {
 				fail("%s: duplicate model %s", at, key)
 			} else {
 				seen[key] = true
 			}
+
 			if rc.Timeout != "" {
 				d, err := time.ParseDuration(rc.Timeout)
 				if err != nil || d <= 0 {
 					fail("%s.timeout: want positive duration like 30s, got %q", at, rc.Timeout)
 				}
+
 				e.Timeout = d
 			}
+
 			if rc.Price != nil {
 				if rc.Price.Input < 0 || rc.Price.Output < 0 {
 					fail("%s.price: must not be negative", at)
 				}
+
 				e.Price = Price{Input: rc.Price.Input, Output: rc.Price.Output}
 			}
+
 			t.Chain = append(t.Chain, e)
 		}
 
@@ -235,13 +259,15 @@ func parseConfig(data []byte, baseDir string) (*Config, error) {
 	if len(errs) > 0 {
 		return nil, errors.Join(errs...)
 	}
+
 	return cfg, nil
 }
 
-// taskVersion хэширует то, что влияет на результат задачи: модели цепочки,
-// сверку и текст промпта. Таймауты и цены в хэш не входят.
+// taskVersion hashes what affects the task result: chain models, cross-check
+// and prompt text; timeouts and prices are not part of the hash
 func taskVersion(t Task) string {
 	type model struct{ Provider, Model string }
+
 	v := struct {
 		PromptVersion string
 		Prompt        string
@@ -251,7 +277,9 @@ func taskVersion(t Task) string {
 	for _, e := range t.Chain {
 		v.Chain = append(v.Chain, model{e.Provider, e.Model})
 	}
-	b, _ := json.Marshal(v) // структура из строк и bool — Marshal не падает
+
+	b, _ := json.Marshal(v) // strings and bools only, Marshal cannot fail
 	sum := sha256.Sum256(b)
+
 	return hex.EncodeToString(sum[:6])
 }

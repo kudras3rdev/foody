@@ -1,2 +1,2 @@
-// Package tasks — задачи распознавания (LabelExtractor, MealRecognizer, TextParser) поверх реестра моделей.
+// Package tasks implements recognition tasks (LabelExtractor, MealRecognizer, TextParser) on top of the model registry
 package tasks

@@ -16,9 +16,11 @@ func (s *sample) Validate() error {
 	if s.Kcal == nil {
 		return errors.New("kcal is required")
 	}
+
 	if *s.Kcal < 0 {
 		return errors.New("kcal must be >= 0")
 	}
+
 	return nil
 }
 
@@ -35,6 +37,7 @@ func TestDecodeJSONValid(t *testing.T) {
 			if err != nil {
 				t.Fatalf("DecodeJSON: %v", err)
 			}
+
 			if got.Name != "кола" || *got.Kcal != 42 || len(got.Items) != 1 {
 				t.Errorf("got %+v", got)
 			}
@@ -64,6 +67,7 @@ func TestDecodeJSONInvalid(t *testing.T) {
 			if err == nil {
 				t.Fatalf("want error, got %+v", got)
 			}
+
 			if !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("err = %q, want %q", err, tt.want)
 			}

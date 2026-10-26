@@ -26,24 +26,28 @@ tasks:
       - { provider: gemini, model: flash-lite }
 `
 
-// writeConfig раскладывает конфиг и промпты как в backend/: config/models.yaml и prompts/*.md.
+// writeConfig lays out the config and prompts like backend/: config/models.yaml and prompts/*.md
 func writeConfig(t *testing.T, config string, prompts map[string]string) string {
 	t.Helper()
+
 	dir := t.TempDir()
 	for _, sub := range []string{"config", "prompts"} {
 		if err := os.Mkdir(filepath.Join(dir, sub), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
+
 	for name, text := range prompts {
 		if err := os.WriteFile(filepath.Join(dir, "prompts", name), []byte(text), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
+
 	path := filepath.Join(dir, "config", "models.yaml")
 	if err := os.WriteFile(path, []byte(config), 0o644); err != nil {
 		t.Fatal(err)
 	}
+
 	return path
 }
 
@@ -68,24 +72,31 @@ func TestLoadConfigValid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if label.PromptVersion != "label_v1" {
 		t.Errorf("PromptVersion = %q, want label_v1", label.PromptVersion)
 	}
+
 	if want := filepath.Join(filepath.Dir(path), "..", "prompts", "label_v1.md"); label.PromptPath != want {
 		t.Errorf("PromptPath = %q, want %q", label.PromptPath, want)
 	}
+
 	if label.Prompt != defaultPrompts["label_v1.md"] {
 		t.Errorf("Prompt = %q", label.Prompt)
 	}
+
 	if !label.CrossCheck || len(label.Chain) != 2 {
 		t.Fatalf("CrossCheck = %v, chain len = %d", label.CrossCheck, len(label.Chain))
 	}
+
 	if e := label.Chain[0]; e.Timeout != 20*time.Second || e.Price != (Price{Input: 0.1, Output: 0.4}) {
 		t.Errorf("chain[0] = %+v", e)
 	}
+
 	if e := label.Chain[1]; e.Timeout != DefaultTimeout || e.Price != (Price{}) {
 		t.Errorf("chain[1] defaults = %+v", e)
 	}
+
 	if len(label.Version) != 12 {
 		t.Errorf("Version = %q, want 12 hex chars", label.Version)
 	}
@@ -103,10 +114,12 @@ func TestLoadConfigValid(t *testing.T) {
 func TestTaskVersion(t *testing.T) {
 	load := func(config string, prompts map[string]string) string {
 		t.Helper()
+
 		cfg, err := LoadConfig(writeConfig(t, config, prompts))
 		if err != nil {
 			t.Fatal(err)
 		}
+
 		return cfg.Tasks["label_extraction"].Version
 	}
 	base := load(validConfig, defaultPrompts)
@@ -223,10 +236,12 @@ func TestLoadConfigErrors(t *testing.T) {
 			if prompts == nil {
 				prompts = defaultPrompts
 			}
+
 			cfg, err := LoadConfig(writeConfig(t, tt.config, prompts))
 			if err == nil {
 				t.Fatalf("want error, got config %+v", cfg)
 			}
+
 			for _, w := range tt.want {
 				if !strings.Contains(err.Error(), w) {
 					t.Errorf("error %q\ndoes not contain %q", err, w)
@@ -243,12 +258,13 @@ func TestLoadConfigMissingFile(t *testing.T) {
 	}
 }
 
-// Настоящий конфиг репозитория должен всегда загружаться.
+// the real repository config must always load
 func TestRepoModelsConfigLoads(t *testing.T) {
 	cfg, err := LoadConfig("../../config/models.yaml")
 	if err != nil {
 		t.Fatalf("config/models.yaml: %v", err)
 	}
+
 	if _, err := cfg.Task("label_extraction"); err != nil {
 		t.Error(err)
 	}

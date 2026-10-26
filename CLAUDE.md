@@ -1,69 +1,92 @@
 # Foody
 
-Foody — личный счётчик КБЖУ для одного пользователя: фото или подпись еды → запись с КБЖУ, точность дневного итога ±10%.
-Требования и решения: @docs/requirements.md
-Архитектура (компоненты, потоки, контракты, жизненный цикл записи): @docs/architecture.md
-План и текущий этап: @docs/plan.md
+Foody is a personal calorie and macro (KBJU) tracker for a single user: a food photo or caption becomes an entry with calories, protein, fat and carbs, with daily total accuracy of ±10%.
+Requirements and decisions: @docs/requirements.md
+Architecture (components, flows, contracts, entry lifecycle): @docs/architecture.md
+Plan and current stage: @docs/plan.md
 
-## Текущий этап
+The documents in `docs/` are written in Russian.
 
-Этапы 0–1: сбор золотого набора и ядро моделей + eval.
-Не трогать HTTP API, БД записей и Android, пока этап 1 не закрыт.
+## Current stage
 
-## Термины в коде
+Stages 0–1: collecting the golden set, the model core and eval.
+Do not touch the HTTP API, the entries database or Android until stage 1 is closed.
 
-- Уровни достоверности: `high` (🟢), `medium` (🟡), `low` (🔴)
-- Состояния записи: `captured`, `uploaded`, `recognizing`, `needs_review`, `confirmed`, `failed`
-- Источник КБЖУ позиции: `label`, `official_menu`, `llm_estimate`, `manual`
-- Источник количества: `caption`, `standard`, `estimate`; источник массы или объёма (`amount_source`): `label`, `menu`, `estimate`, `user`, `scale`
-- База позиции (`basis`): `g` или `ml`; КБЖУ хранятся на 100 единиц базы (`per_100`)
+## Terms in code
 
-## Главные принципы (не нарушать)
+- Confidence levels: `high` (green), `medium` (yellow), `low` (red)
+- Entry states: `captured`, `uploaded`, `recognizing`, `needs_review`, `confirmed`, `failed`
+- Item nutrition source: `label`, `official_menu`, `llm_estimate`, `manual`
+- Quantity source: `caption`, `standard`, `estimate`; mass or volume source (`amount_source`): `label`, `menu`, `estimate`, `user`, `scale`
+- Item basis (`basis`): `g` or `ml`; nutrition is stored per 100 basis units (`per_100`)
 
-- **LLM не считает КБЖУ.** Модель опознаёт позицию и оценивает количество; калории и БЖУ считает код по данным каталога (на 100 г или 100 мл).
-- **Распознавание = сопоставление с каталогом.** Сначала ищем среди известных позиций, новую позицию создаём только если совпадения нет.
-- **Толстый сервер, тонкий клиент.** Вся бизнес-логика — в Go. Android-клиент только снимает, ставит в очередь и показывает.
-- **Абстракция на уровне задач, а не LLM.** Код вызывает `LabelExtractor`, `MealRecognizer` и т.п., а не модель напрямую. Модели, провайдеры, цепочки fallback и версии промптов — только в `backend/config/models.yaml` и `backend/prompts/`.
-- **Ответ модели всегда валидируется** по схеме. Невалидный ответ → повтор или следующая модель в цепочке; дальше по системе он не проходит.
-- **Ничего не теряем.** Храним исходное фото, сырой ответ модели, правки пользователя и итог. Каждый вызов модели пишется в журнал (провайдер, модель, версия промпта, задержка, токены, стоимость, сырой ответ).
-- **Задел под многопользовательность:** `user_id` во всех таблицах с данными пользователя, но регистрации и ролей нет.
+## Core principles (do not break)
 
-## Стек
+- **The LLM does not calculate nutrition.** The model identifies the item and estimates the quantity; code calculates calories and macros from catalog data (per 100 g or 100 ml).
+- **Recognition is catalog matching.** Search known items first; create a new item only when nothing matches.
+- **Fat server, thin client.** All business logic lives in Go. The Android client only captures, queues and displays.
+- **Abstraction at the task level, not the LLM level.** Code calls `LabelExtractor`, `MealRecognizer` and similar, never a model directly. Models, providers, fallback chains and prompt versions live only in `backend/config/models.yaml` and `backend/prompts/`.
+- **Model answers are always validated** against a schema. An invalid answer leads to a retry or the next model in the chain; it never goes further into the system.
+- **Lose nothing.** Keep the original photo, the raw model answer, user edits and the result. Every model call is logged (provider, model, prompt version, latency, tokens, cost, raw answer).
+- **Ready for multiple users:** `user_id` in every table with user data, but no registration or roles.
 
-- Backend: Go, стандартная библиотека `net/http` (роутинг через паттерны `http.ServeMux`), без веб-фреймворков.
-- БД: SQLite в режиме WAL через `modernc.org/sqlite` (без cgo — простая сборка под VPS). Миграции — SQL-файлы, встроенные через `embed`.
-- LLM: OpenAI-совместимый HTTP API (Gemini, Mistral, Groq, OpenRouter) через один адаптер.
-- Деплой: один бинарник на VPS (Финляндия, 1 ядро, 2 ГБ RAM) — следи за памятью и не добавляй тяжёлых зависимостей.
-- Клиент (позже): Android, Kotlin + Jetpack Compose, ML Kit для штрихкодов, WorkManager для офлайн-очереди.
+## Stack
 
-## Структура
+- Backend: Go, standard library `net/http` (routing via `http.ServeMux` patterns), no web frameworks.
+- Database: SQLite in WAL mode via `modernc.org/sqlite` (no cgo, simple builds for the VPS). Migrations are SQL files embedded with `embed`.
+- LLM: OpenAI-compatible HTTP API (Gemini, Mistral, Groq, OpenRouter) through a single adapter.
+- Deployment: a single binary on a VPS (Finland, 1 core, 2 GB RAM); watch memory and avoid heavy dependencies.
+- Client (later): Android, Kotlin + Jetpack Compose, ML Kit for barcodes, WorkManager for the offline queue.
 
-- `backend/cmd/server` — HTTP API и воркер
-- `backend/cmd/foody` — CLI: `eval`, `reprocess`, `seed`
-- `backend/internal/...` — пакеты по доменам (llm, tasks, catalog, entries, storage)
-- `backend/config/models.yaml` — провайдеры и цепочки моделей по задачам
-- `backend/prompts/` — промпты, имя файла содержит версию (`meal_v3.md`)
-- `data/` — фото, золотой набор (`data/golden/cases.yaml`), файл БД; в git не коммитится, кроме `data/golden/cases.yaml`
+## Layout
 
-## Команды
+- `backend/cmd/server`: HTTP API and worker
+- `backend/cmd/foody`: CLI with `eval`, `reprocess`, `seed`, `label`
+- `backend/internal/...`: packages by domain (llm, tasks, catalog, entries, storage)
+- `backend/config/models.yaml`: providers and model chains per task
+- `backend/prompts/`: prompts, the file name carries the version (`meal_v3.md`)
+- `data/`: photos, golden set (`data/golden/cases.yaml`), database file; not committed except `data/golden/cases.yaml`
 
-- Сборка: `cd backend && go build ./...`
-- Тесты: `cd backend && go test ./...`
-- Линт: `cd backend && go vet ./...`
-- Чтение этикеток на фото (отладка промпта): `cd backend && go run ./cmd/foody label ../data/golden/<фото>`
+## Commands
 
-## Правила работы
+Run from the repository root:
 
-- Нетривиальные изменения — сначала план, потом код.
-- Чистая логика (подсчёт КБЖУ, проверки этикеток 4·Б+9·Ж+4·У, диапазоны, валидация ответов) — только с юнит-тестами.
-- Внешние HTTP-вызовы в тестах мокаются; реальные ключи в тестах не используются.
-- Секреты только из переменных окружения (`.env`, в git — `.env.example`). Никогда не коммитить ключи.
-- Новые зависимости — только с обоснованием; предпочитать стандартную библиотеку.
-- Ссылаться на идентификаторы требований (FR-xx, NFR-xx, D-xx) в описаниях коммитов и планов.
-- Новое архитектурное решение → короткий ADR в `docs/decisions/NNN-название.md` (контекст, решение, альтернативы) и правка затронутых разделов requirements.md или architecture.md.
-- Закрыл пункт плана → отметить его в `docs/plan.md`; закрыл этап → обновить раздел «Текущий этап» здесь.
-- Отвечай максимально емко и кратко: что просили сделать, критерии выполнения, сделал/не сделал, следующее предложение
-- Не трогай файл TODO.md - этот файл предназначен ТОЛЬКО для меня.
+- Build: `make build` (binaries go to `bin/`)
+- Tests: `make test`
+- Vet: `make vet`
+- Lint: `make lint` (installs the pinned golangci-lint into `bin/` on first run)
+- Everything before a commit: `make check`
+- Read nutrition labels from photos (prompt debugging): `cd backend && go run ./cmd/foody label ../data/golden/<photo>`
+
+## Language and message style
+
+- Code comments, error strings, log messages, CLI output and other text in code, commit messages and PR descriptions are written **in English only**.
+- Style for all of them: start with a lowercase letter, use the imperative mood (`add`, not `added` or `adds`), never end with a period.
+  - Commit message: `add label normalization`, not `Added label normalization.`
+  - Error string: `fmt.Errorf("read config: %w", err)`
+  - Comment: `// skip models without an API key`
+- Exception: Go doc comments start with the identifier name as Go requires (`// Registry picks models per task`), still without a trailing period.
+- Exception: LLM prompts (`backend/prompts/`, `retryPrompt`) are in Russian because labels and food names are Russian. Test data may contain Russian label text.
+
+## Code style (enforced by `make lint`, config in `backend/.golangci.yml`)
+
+- Separate logical blocks with an empty line; do not cuddle assignments with other statements (`wsl_v5`).
+- Wrap every returned error with context: `fmt.Errorf("what failed: %w", err)`; never return a bare error from another package (`wrapcheck`, `errorlint`).
+- No Cyrillic in non-test string literals (`gosmopolitan`); prompt strings in code are marked with `//nolint:gosmopolitan`.
+- `make check` (vet, lint, tests, build) must pass before every commit.
+
+## Working rules
+
+- Non-trivial changes: plan first, then code.
+- Pure logic (nutrition math, label checks 4·P+9·F+4·C, ranges, answer validation) only with unit tests.
+- External HTTP calls are mocked in tests; tests never use real keys.
+- Secrets only from environment variables (`.env`, with `.env.example` in git). Never commit keys.
+- New dependencies only with a justification; prefer the standard library.
+- Reference requirement IDs (FR-xx, NFR-xx, D-xx) in commit messages and plans.
+- A new architectural decision gets a short ADR in `docs/decisions/NNN-name.md` (context, decision, alternatives) plus edits to the affected sections of requirements.md or architecture.md.
+- Closed a plan item: tick it in `docs/plan.md`; closed a stage: update "Current stage" here.
+- Answer as briefly and densely as possible: what was asked, the completion criteria, done or not done, the next proposal.
+- Do not touch `TODO.md`: this file is for the user only.
 
 ## Testing
 

@@ -11,29 +11,36 @@ import (
 
 func readLog(t *testing.T, path string) []map[string]any {
 	t.Helper()
+
 	f, err := os.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer f.Close()
+
 	var lines []map[string]any
+
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		var m map[string]any
 		if err := json.Unmarshal(sc.Bytes(), &m); err != nil {
 			t.Fatalf("line %q is not JSON: %v", sc.Text(), err)
 		}
+
 		lines = append(lines, m)
 	}
+
 	return lines
 }
 
 func TestJSONLLogWritesAttempts(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "logs", "nested", "model_calls.jsonl")
+
 	l, err := OpenJSONLLog(path)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	at := time.Date(2026, 10, 26, 12, 30, 0, 0, time.FixedZone("MSK", 3*3600))
 	l.Log(Attempt{
 		Time: at, Task: "label_extraction", ConfigVersion: "abc123", PromptVersion: "label_v1",
@@ -42,6 +49,7 @@ func TestJSONLLogWritesAttempts(t *testing.T) {
 		Raw: []byte(`{"choices":[{"message":{"content":"<ok> & \"кола\""}}]}`),
 	})
 	l.Log(Attempt{Task: "label_extraction", Status: StatusRateLimited, Error: "openrouter/m: HTTP 429"})
+
 	if err := l.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
@@ -50,7 +58,9 @@ func TestJSONLLogWritesAttempts(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("got %d lines, want 2", len(lines))
 	}
+
 	first := lines[0]
+
 	want := map[string]any{
 		"time": "2026-10-26T09:30:00Z", "task": "label_extraction", "config_version": "abc123",
 		"prompt_version": "label_v1", "chain_index": 1.0, "retry": true, "provider": "openrouter",
@@ -62,9 +72,11 @@ func TestJSONLLogWritesAttempts(t *testing.T) {
 			t.Errorf("%s = %#v, want %#v", k, first[k], v)
 		}
 	}
+
 	if _, ok := first["error"]; ok {
 		t.Error("error must be omitted for successful attempt")
 	}
+
 	if lines[1]["status"] != "rate_limited" || lines[1]["error"] != "openrouter/m: HTTP 429" {
 		t.Errorf("second line = %v", lines[1])
 	}
@@ -73,6 +85,7 @@ func TestJSONLLogWritesAttempts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if perm := info.Mode().Perm(); perm != 0o600 {
 		t.Errorf("file mode = %v, want 0600", perm)
 	}
@@ -85,11 +98,14 @@ func TestJSONLLogAppends(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+
 		l.Log(Attempt{Task: "t", ChainIndex: i})
+
 		if err := l.Close(); err != nil {
 			t.Fatal(err)
 		}
 	}
+
 	lines := readLog(t, path)
 	if len(lines) != 2 || lines[1]["chain_index"] != 1.0 {
 		t.Errorf("lines = %v, want two appended records", lines)
@@ -101,11 +117,14 @@ func TestJSONLLogKeepsWriteError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	l.f.Close() // запись в закрытый файл падает
+
+	l.f.Close() // writing to a closed file fails
 	l.Log(Attempt{Task: "t"})
+
 	if l.Err() == nil {
 		t.Fatal("Err: want write error")
 	}
+
 	if err := l.Close(); err == nil {
 		t.Error("Close: want first write error")
 	}
@@ -113,10 +132,12 @@ func TestJSONLLogKeepsWriteError(t *testing.T) {
 
 func TestRegistryWritesJSONLLog(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "model_calls.jsonl")
+
 	l, err := OpenJSONLLog(path)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	reg, _ := newTestRegistry(t,
 		&stubProvider{name: "a", handler: respond(503, "down")},
 		&stubProvider{name: "b", handler: respond(200, chatBody("ok"))},
@@ -126,9 +147,11 @@ func TestRegistryWritesJSONLLog(t *testing.T) {
 	if _, err := reg.Call(t.Context(), "task", userMsg, nil); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := l.Close(); err != nil {
 		t.Fatal(err)
 	}
+
 	lines := readLog(t, path)
 	if len(lines) != 2 || lines[0]["status"] != "server_error" || lines[0]["raw_response"] != "down" || lines[1]["status"] != "ok" {
 		t.Errorf("lines = %v", lines)

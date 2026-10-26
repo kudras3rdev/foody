@@ -1,4 +1,4 @@
-// Command foody — CLI Foody: eval, reprocess, seed.
+// Command foody is the Foody CLI: eval, reprocess, seed and label
 package main
 
 import (
@@ -11,10 +11,10 @@ import (
 const usage = `usage: foody <command>
 
 commands:
-  eval       прогон золотого набора через конфигурацию моделей (FR-20)
-  reprocess  пересчёт записей другой конфигурацией моделей (FR-18)
-  seed       загрузка стартового каталога (FR-08)
-  label      прочитать этикетки с фото и показать проверки (отладка промпта)
+  eval       run the golden set through a model configuration (FR-20)
+  reprocess  reprocess entries with another model configuration (FR-18)
+  seed       load the starter catalog (FR-08)
+  label      read nutrition labels from photos and show the checks (prompt debugging)
 `
 
 func main() {
@@ -22,6 +22,7 @@ func main() {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
 	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 

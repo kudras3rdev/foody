@@ -9,41 +9,42 @@ import (
 	"time"
 )
 
-// Статусы попытки вызова модели — поле status в журнале (NFR-09).
+// model call attempt statuses, the status field of the call log (NFR-09)
 const (
 	StatusOK          = "ok"
 	StatusTimeout     = "timeout"
 	StatusRateLimited = "rate_limited"  // HTTP 429
 	StatusServerError = "server_error"  // HTTP 5xx
-	StatusClientError = "client_error"  // прочие HTTP 4xx — скорее всего ошибка конфига
-	StatusNetwork     = "network_error" // соединение, DNS, TLS
-	StatusBadResponse = "bad_response"  // 2xx, но не ответ Chat Completions или пустой текст
-	StatusInvalid     = "invalid"       // ответ не прошёл проверку задачи
-	StatusConfigError = "config_error"  // нет ключа API
-	StatusCanceled    = "canceled"      // отменён внешний контекст
+	StatusClientError = "client_error"  // other HTTP 4xx, most likely a config error
+	StatusNetwork     = "network_error" // connection, DNS, TLS
+	StatusBadResponse = "bad_response"  // 2xx but not a Chat Completions response or empty text
+	StatusInvalid     = "invalid"       // answer failed the task validation
+	StatusConfigError = "config_error"  // no API key
+	StatusCanceled    = "canceled"      // parent context canceled
 )
 
-// ErrChainExhausted — ни одна модель цепочки не дала валидный ответ.
+// ErrChainExhausted means no chain model gave a valid answer
 var ErrChainExhausted = errors.New("all models in chain failed")
 
-// retryPrompt — сообщение для повтора после невалидного ответа. Оно не зависит
-// от задачи, поэтому живёт в коде, а не в prompts/ (ADR 006).
-const retryPrompt = "Ответ не прошёл проверку: %v\nИсправь ошибку и верни только JSON целиком, без пояснений."
+// retryPrompt is the message for a retry after an invalid answer; it does not
+// depend on the task, so it lives in code rather than prompts/ (ADR 006)
+// it is in Russian like the other prompts
+const retryPrompt = "Ответ не прошёл проверку: %v\nИсправь ошибку и верни только JSON целиком, без пояснений." //nolint:gosmopolitan // model prompt
 
-// invalidError — ответ модели не прошёл проверку задачи; reason показывается модели при повторе.
+// invalidError means the answer failed task validation, reason is shown to the model on retry
 type invalidError struct{ reason error }
 
 func (e *invalidError) Error() string { return "invalid response: " + e.reason.Error() }
 func (e *invalidError) Unwrap() error { return e.reason }
 
-// Attempt — одна попытка вызова модели, включая неудачные (NFR-09).
+// Attempt is one model call attempt, failed ones included (NFR-09)
 type Attempt struct {
 	Time          time.Time
 	Task          string
 	ConfigVersion string
 	PromptVersion string
 	ChainIndex    int
-	Retry         bool // повтор той же модели после невалидного ответа
+	Retry         bool // retry of the same model after an invalid answer
 	Provider      string
 	Model         string
 	Status        string
@@ -55,7 +56,7 @@ type Attempt struct {
 	Raw           []byte
 }
 
-// Result — итог вызова задачи: текст ответа модели, которая справилась, и все попытки.
+// Result is a task call outcome: the answer of the model that succeeded and all attempts
 type Result struct {
 	Content  string
 	Provider string
@@ -63,91 +64,106 @@ type Result struct {
 	Attempts []Attempt
 }
 
-// Validator проверяет текст ответа модели; ошибка отправляет запрос следующей модели.
+// Validator checks the model answer text, an error sends the request to the next model
 type Validator func(content string) error
 
-// Registry выбирает модели по задаче и проходит цепочку fallback (NFR-08).
-// О предметной области не знает: сообщения и проверку ответа передаёт задача.
+// Registry picks models per task and walks the fallback chain (NFR-08)
+// it knows nothing about the domain: the task passes messages and validation
 type Registry struct {
 	cfg  *Config
 	http *http.Client
 	log  func(Attempt)
 }
 
-// NewRegistry создаёт реестр. log получает каждую попытку; nil — без журнала.
-// hc == nil — http.Client по умолчанию.
+// NewRegistry creates a registry; log receives every attempt, nil disables logging
+// nil hc uses the default http.Client
 func NewRegistry(cfg *Config, hc *http.Client, log func(Attempt)) *Registry {
 	if hc == nil {
 		hc = &http.Client{}
 	}
+
 	if log == nil {
 		log = func(Attempt) {}
 	}
+
 	return &Registry{cfg: cfg, http: hc, log: log}
 }
 
-// Task возвращает задачу из конфига: задаче нужен текст промпта.
+// Task returns the configured task, tasks need the prompt text
 func (r *Registry) Task(name string) (Task, error) {
 	return r.cfg.Task(name)
 }
 
-// Call проходит цепочку задачи по порядку и возвращает первый валидный ответ.
-// Модели вызываются последовательно (architecture.md, раздел 8).
+// Call walks the task chain in order and returns the first valid answer
+// models are called sequentially (architecture.md, section 8)
 func (r *Registry) Call(ctx context.Context, task string, msgs []Message, validate Validator) (*Result, error) {
 	t, err := r.cfg.Task(task)
 	if err != nil {
 		return &Result{}, err
 	}
+
 	res := &Result{}
+
 	var errs []error
+
 	for i := range t.Chain {
 		err := r.tryModel(ctx, t, i, msgs, validate, res)
 		if err == nil {
 			return res, nil
 		}
+
 		if ctx.Err() != nil {
-			return res, ctx.Err()
+			return res, fmt.Errorf("task %s: %w", task, ctx.Err())
 		}
+
 		errs = append(errs, err)
 	}
+
 	return res, fmt.Errorf("task %s: %w: %w", task, ErrChainExhausted, errors.Join(errs...))
 }
 
-// CallModel вызывает одну модель цепочки без fallback: для eval по каждой
-// модели отдельно (FR-20) и независимой сверки этикетки второй моделью (FR-05).
+// CallModel calls one chain model without fallback: for eval of each model
+// separately (FR-20) and for an independent label cross-check (FR-05)
 func (r *Registry) CallModel(ctx context.Context, task string, index int, msgs []Message, validate Validator) (*Result, error) {
 	t, err := r.cfg.Task(task)
 	if err != nil {
 		return &Result{}, err
 	}
+
 	if index < 0 || index >= len(t.Chain) {
 		return &Result{}, fmt.Errorf("task %s: chain index %d out of range [0, %d)", task, index, len(t.Chain))
 	}
+
 	res := &Result{}
+
 	return res, r.tryModel(ctx, t, index, msgs, validate, res)
 }
 
-// tryModel вызывает модель и при невалидном ответе повторяет её один раз,
-// показав ей её ответ и текст ошибки (NFR-10, architecture.md 5.3).
+// tryModel calls a model and retries it once after an invalid answer,
+// showing it the answer and the error text (NFR-10, architecture.md 5.3)
 func (r *Registry) tryModel(ctx context.Context, t Task, i int, msgs []Message, validate Validator, res *Result) error {
 	content, err := r.attempt(ctx, t, i, msgs, validate, false, res)
+
 	var ie *invalidError
 	if !errors.As(err, &ie) {
 		return err
 	}
+
 	retry := append(slices.Clip(msgs),
 		Message{Role: "assistant", Text: content},
 		Message{Role: "user", Text: fmt.Sprintf(retryPrompt, ie.reason)},
 	)
 	_, err = r.attempt(ctx, t, i, retry, validate, true, res)
+
 	return err
 }
 
-// attempt делает один вызов, пишет его в журнал и в res.Attempts;
-// при успехе заполняет res.Content, res.Provider и res.Model.
-// Возвращает текст ответа и тогда, когда он не прошёл проверку: он нужен для повтора.
+// attempt makes one call and records it in the log and res.Attempts
+// on success it fills res.Content, res.Provider and res.Model
+// it returns the answer text even when validation fails, the retry needs it
 func (r *Registry) attempt(ctx context.Context, t Task, i int, msgs []Message, validate Validator, retry bool, res *Result) (content string, err error) {
 	e := t.Chain[i]
+
 	a := Attempt{
 		Time:          time.Now(),
 		Task:          t.Name,
@@ -164,6 +180,7 @@ func (r *Registry) attempt(ctx context.Context, t Task, i int, msgs []Message, v
 			err = fmt.Errorf("%s/%s: %w", e.Provider, e.Model, err)
 			a.Error = err.Error()
 		}
+
 		res.Attempts = append(res.Attempts, a)
 		r.log(a)
 	}()
@@ -175,6 +192,7 @@ func (r *Registry) attempt(ctx context.Context, t Task, i int, msgs []Message, v
 
 	callCtx, cancel := context.WithTimeout(ctx, e.Timeout)
 	defer cancel()
+
 	resp, err := NewClient(r.cfg.Providers[e.Provider].BaseURL, key, r.http).Complete(callCtx, Request{
 		Model:    e.Model,
 		Messages: msgs,
@@ -183,23 +201,29 @@ func (r *Registry) attempt(ctx context.Context, t Task, i int, msgs []Message, v
 	a.Latency, a.Raw = resp.Latency, resp.Raw
 	a.TokensIn, a.TokensOut = resp.TokensIn, resp.TokensOut
 	a.CostUSD = (float64(resp.TokensIn)*e.Price.Input + float64(resp.TokensOut)*e.Price.Output) / 1e6
+
 	if err != nil {
 		return "", err
 	}
+
 	if validate != nil {
 		if verr := validate(resp.Content); verr != nil {
 			return resp.Content, &invalidError{reason: verr}
 		}
 	}
+
 	res.Content, res.Provider, res.Model = resp.Content, e.Provider, e.Model
+
 	return resp.Content, nil
 }
 
-// classify сводит ошибку попытки к статусу журнала. Все статусы, кроме
-// ok и canceled, ведут к следующей модели (architecture.md, 5.3).
+// classify maps an attempt error to a log status; every status except ok
+// and canceled moves on to the next model (architecture.md 5.3)
 func classify(parent context.Context, err error) string {
-	var he *HTTPError
-	var ie *invalidError
+	var (
+		he *HTTPError
+		ie *invalidError
+	)
 	switch {
 	case err == nil:
 		return StatusOK

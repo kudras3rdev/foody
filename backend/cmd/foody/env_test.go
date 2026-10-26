@@ -8,17 +8,18 @@ import (
 
 func TestParseDotEnv(t *testing.T) {
 	got, err := parseDotEnv([]byte(`
-# ключи провайдеров
+# provider keys
 GEMINI_API_KEY=abc
 export GROQ_API_KEY = def
 MISTRAL_API_KEY="with # hash"
 OPENROUTER_API_KEY='single'
 EMPTY=
-COMMENTED=value # пояснение
+COMMENTED=value # explanation
 `))
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	want := map[string]string{
 		"GEMINI_API_KEY": "abc", "GROQ_API_KEY": "def", "MISTRAL_API_KEY": "with # hash",
 		"OPENROUTER_API_KEY": "single", "EMPTY": "", "COMMENTED": "value",
@@ -26,6 +27,7 @@ COMMENTED=value # пояснение
 	if len(got) != len(want) {
 		t.Errorf("got %v", got)
 	}
+
 	for k, v := range want {
 		if got[k] != v {
 			t.Errorf("%s = %q, want %q", k, got[k], v)
@@ -42,6 +44,7 @@ func TestLoadDotEnv(t *testing.T) {
 	if err := os.WriteFile(path, []byte("FOODY_T_NEW=file\nFOODY_T_SET=file\nFOODY_T_EMPTY=file\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+
 	t.Setenv("FOODY_T_SET", "shell")
 	t.Setenv("FOODY_T_EMPTY", "")
 	t.Setenv("FOODY_T_NEW", "")
@@ -50,6 +53,7 @@ func TestLoadDotEnv(t *testing.T) {
 	if err := loadDotEnv(path); err != nil {
 		t.Fatal(err)
 	}
+
 	for k, v := range map[string]string{"FOODY_T_NEW": "file", "FOODY_T_SET": "shell", "FOODY_T_EMPTY": "file"} {
 		if got := os.Getenv(k); got != v {
 			t.Errorf("%s = %q, want %q", k, got, v)

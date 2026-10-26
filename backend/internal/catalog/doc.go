@@ -1,2 +1,2 @@
-// Package catalog — позиции каталога, кандидаты для опознания, проверки этикеток и подсчёт КБЖУ.
+// Package catalog holds catalog items, recognition candidates, label checks and nutrition math
 package catalog

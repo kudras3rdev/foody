@@ -6,7 +6,7 @@ import (
 
 func ptr(v float64) *float64 { return &v }
 
-// yogurt — типичная этикетка: 4·2.8 + 9·2.4 + 4·11.5 = 78.8 при 79 ккал.
+// yogurt is a typical label: 4*2.8 + 9*2.4 + 4*11.5 = 78.8 against 79 kcal
 func yogurt() Label {
 	return Label{Name: "Йогурт", Basis: BasisGram, Per100: Per100{Kcal: 79, Protein: 2.8, Fat: 2.4, Carbs: 11.5}, PackSize: ptr(150)}
 }
@@ -16,6 +16,7 @@ func codes(issues []Issue) []string {
 	for _, i := range issues {
 		c = append(c, i.Code)
 	}
+
 	return c
 }
 
@@ -24,11 +25,13 @@ func equalCodes(got []Issue, want []string) bool {
 	if len(c) != len(want) {
 		return false
 	}
+
 	for i := range c {
 		if c[i] != want[i] {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -44,25 +47,25 @@ func TestCheckLabel(t *testing.T) {
 			l.Basis, l.Per100 = BasisML, Per100{}
 		}},
 		{name: "diet drink within absolute tolerance", label: func(l *Label) {
-			// 4·0.9 = 3.6 при 1 ккал: 15% от 1 — это 0.15, но абсолютный допуск 5 ккал.
+			// 4*0.9 = 3.6 against 1 kcal: 15% of 1 is 0.15, but the absolute tolerance is 5 kcal
 			l.Basis, l.Per100 = BasisML, Per100{Kcal: 1, Carbs: 0.9}
 		}},
 		{name: "zero kcal but sugar", label: func(l *Label) {
 			l.Basis, l.Per100 = BasisML, Per100{Kcal: 0, Carbs: 10}
 		}, want: []string{IssueEnergyMismatch}},
 		{name: "tolerance is relative to label kcal", label: func(l *Label) {
-			// формула 100, ккал 115: разница 15, допуск 0.15·115 = 17.25.
+			// formula 100, kcal 115: difference 15, tolerance 0.15*115 = 17.25
 			l.Per100 = Per100{Kcal: 115, Carbs: 25}
 		}},
 		{name: "exact boundary of 15 percent", label: func(l *Label) {
-			// формула 85, ккал 100, допуск 15.
+			// formula 85, kcal 100, tolerance 15
 			l.Per100 = Per100{Kcal: 100, Carbs: 21.25}
 		}},
 		{name: "just over 15 percent", label: func(l *Label) {
 			l.Per100 = Per100{Kcal: 100, Carbs: 21.2}
 		}, want: []string{IssueEnergyMismatch}},
 		{name: "kj read as kcal", label: func(l *Label) {
-			l.Per100.Kcal = 330 // 79 ккал = 330 кДж
+			l.Per100.Kcal = 330 // 79 kcal = 330 kJ
 		}, want: []string{IssueEnergyMismatch}},
 		{name: "macros over 100", label: func(l *Label) {
 			l.Per100 = Per100{Kcal: 420, Protein: 5, Fat: 0, Carbs: 100}
@@ -83,6 +86,7 @@ func TestCheckLabel(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			l := yogurt()
 			tt.label(&l)
+
 			got := CheckLabel(l)
 			if !equalCodes(got, tt.want) {
 				t.Errorf("CheckLabel = %+v, want codes %v", got, tt.want)
@@ -94,8 +98,9 @@ func TestCheckLabel(t *testing.T) {
 func TestCheckLabelMessage(t *testing.T) {
 	l := yogurt()
 	l.Per100.Kcal = 330
+
 	got := CheckLabel(l)
-	if len(got) != 1 || got[0].Message != "калорийность 330, а по формуле 4·Б + 9·Ж + 4·У выходит 78.8 (допуск ±49.5)" {
+	if len(got) != 1 || got[0].Message != "label says 330 kcal, but 4*P + 9*F + 4*C gives 78.8 (tolerance 49.5)" {
 		t.Errorf("message = %+v", got)
 	}
 }
@@ -121,10 +126,12 @@ func TestCompareLabels(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			a, b := yogurt(), yogurt()
 			tt.change(&b)
+
 			got := CompareLabels(a, b)
 			if len(got) != tt.want {
 				t.Errorf("CompareLabels = %+v, want %d issues", got, tt.want)
 			}
+
 			for _, i := range got {
 				if i.Code != IssueCrossMismatch {
 					t.Errorf("code = %q", i.Code)
@@ -136,13 +143,14 @@ func TestCompareLabels(t *testing.T) {
 
 func TestCompareLabelsZeroValues(t *testing.T) {
 	a := Label{Basis: BasisML, Per100: Per100{Kcal: 0, Fat: 0}}
+
 	b := Label{Basis: BasisML, Per100: Per100{Kcal: 0.1, Fat: 0.1}}
 	if got := CompareLabels(a, b); len(got) != 0 {
 		t.Errorf("0 vs 0.1 must match, got %+v", got)
 	}
 }
 
-// blini — этикетка из золотого набора (001): строка в тексте, кДж и ккал.
+// blini is the golden set label 001: inline text with kJ and kcal
 func blini() RawLabel {
 	return RawLabel{
 		SourceText: "Пищевая ценность 100 г продукта: белки – 6,4 г; жиры – 2,5 г; углеводы – 21,7 г. Энергетическая ценность: 570,2 кДж / 134,9 ккал.",
@@ -182,14 +190,14 @@ func TestNormalizeLabel(t *testing.T) {
 		},
 		{
 			name: "kcal and kj disagree",
-			// 330 кДж — это 78.9 ккал, а не 134.9: модель взяла не тот столбец.
+			// 330 kJ is 78.9 kcal, not 134.9: the model read the wrong column
 			change: func(r *RawLabel) { r.KJ = ptr(330) },
 			want:   Label{Basis: BasisGram, Per100: Per100{Kcal: 134.9, Protein: 6.4, Fat: 2.5, Carbs: 21.7}, PackSize: ptr(800)},
 			issues: []string{IssueEnergyUnits},
 		},
 		{
 			name: "tiny kcal within absolute tolerance",
-			// «Добрый Кола без сахара» (003): 1,4 кДж / 0,3 ккал.
+			// "Dobry Cola sugar free" (003): 1.4 kJ / 0.3 kcal
 			change: func(r *RawLabel) {
 				r.PerUnit, r.Kcal, r.KJ, r.Protein, r.Fat, r.Carbs = "ml", ptr(0.3), ptr(1.4), 0, 0, 0.1
 				r.PackAmount, r.PackUnit = ptr(1.5), "l"
@@ -249,10 +257,12 @@ func TestNormalizeLabel(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			r := blini()
 			tt.change(&r)
+
 			got, issues := NormalizeLabel(r)
 			if got.Basis != tt.want.Basis || got.Per100 != tt.want.Per100 || !samePack(got.PackSize, tt.want.PackSize) {
 				t.Errorf("label = %+v pack %v, want %+v pack %v", got, fmtPack(got.PackSize), tt.want, fmtPack(tt.want.PackSize))
 			}
+
 			if !equalCodes(issues, tt.issues) {
 				t.Errorf("issues = %+v, want %v", issues, tt.issues)
 			}
@@ -264,10 +274,11 @@ func samePack(a, b *float64) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
+
 	return *a == *b
 }
 
-// Эталоны золотого набора проходят проверки FR-05 после нормализации.
+// golden set references pass FR-05 checks after normalization
 func TestGoldenLabelsPassChecks(t *testing.T) {
 	for name, r := range map[string]RawLabel{
 		"001 blini":     blini(),
@@ -276,6 +287,7 @@ func TestGoldenLabelsPassChecks(t *testing.T) {
 		"004 savushkin": {PerAmount: 100, PerUnit: "g", Kcal: ptr(66.8), KJ: ptr(281.4), Protein: 8, Fat: 2, Carbs: 4.2, PackAmount: ptr(250), PackUnit: "g"},
 	} {
 		l, issues := NormalizeLabel(r)
+
 		issues = append(issues, CheckLabel(l)...)
 		if len(issues) > 0 {
 			t.Errorf("%s: %+v", name, issues)

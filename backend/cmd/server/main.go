@@ -1,4 +1,4 @@
-// Command server — HTTP API и воркер Foody (этап 2).
+// Command server runs the Foody HTTP API and worker (stage 2)
 package main
 
 import "fmt"
