@@ -1,0 +1,16 @@
+providers:
+  gemini:     { base_url: "https://generativelanguage.googleapis.com/v1beta/openai", api_key_env: GEMINI_API_KEY }
+  mistral:    { base_url: "https://api.mistral.ai/v1", api_key_env: MISTRAL_API_KEY }
+  groq:       { base_url: "https://api.groq.com/openai/v1", api_key_env: GROQ_API_KEY }
+  openrouter: { base_url: "https://openrouter.ai/api/v1", api_key_env: OPENROUTER_API_KEY }
+
+tasks:
+  label_extraction:
+    prompt: ../prompts/label_v2.md
+    cross_check: true
+    chain:
+      - { provider: gemini,     model: gemini-2.5-flash, timeout: 30s }
+      - { provider: mistral,    model: mistral-small-latest, timeout: 30s }
+      - { provider: openrouter, model: "nvidia/nemotron-3.5-super-vl:free", timeout: 120s }
+      - { provider: openrouter, model: "google/gemma-4-26b-a4b-it:free", timeout: 120s }
+      - { provider: openrouter, model: "google/gemma-4-31b-it:free", timeout: 120s }

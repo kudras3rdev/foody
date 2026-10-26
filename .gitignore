@@ -1,0 +1,17 @@
+/data/*
+!/data/golden/
+/data/golden/*
+!/data/golden/cases.yaml
+
+.env
+
+/bin/
+/backend/bin/
+*.test
+*.out
+coverage.*
+
+.idea/
+.vscode/
+
+TODO.md

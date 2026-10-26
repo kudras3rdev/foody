@@ -1,0 +1,38 @@
+- id: "001"
+  photo: "img-0.jpeg"
+  kind: label
+  caption: ""
+  expected:
+    name: "КУЛИНАРНЫЕ МУЧНЫЕ ИЗДЕЛИЯ. БЛИНЧИКИ ФАРШИРОВАННЫЕ ЗАМОРОЖЕННЫЕ"
+    basis: g
+    per_100: { kcal: 134.9, protein: 6.4, fat: 2.5, carbs: 21.7 }
+    pack_size: 800
+
+- id: "002"
+  photo: "img-1.jpeg"
+  kind: label
+  caption: ""
+  expected:
+    name: "NESTLE"
+    basis: g
+    per_100: { kcal: 365, protein: 9.8, fat: 5.1, carbs: 66 }
+
+- id: "003"
+  photo: "img-2.jpeg"
+  kind: label
+  caption: ""
+  expected:
+    name: "ДОБРЫЙ КОЛА"
+    basis: ml
+    per_100: { kcal: 0.3, protein: 0, fat: 0, carbs: 0.1 }
+    pack_size: 1500
+
+- id: "004"
+  photo: "img-3.jpeg"
+  kind: label
+  caption: ""
+  expected:
+    name: "САВУШКИН"
+    basis: g
+    per_100: { kcal: 66.8, protein: 8.0, fat: 2.0, carbs: 4.2 }
+    pack_size: 250
